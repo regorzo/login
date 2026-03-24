@@ -1,0 +1,159 @@
+app = Flask(__name__)
+app.secret_key = os.urandom(24)
+
+# ---------- LOGIN REQUIRED DECORATOR ----------
+def login_required(f):
+    @wraps(f)
+    def decorated_function(*args, **kwargs):
+        if not session.get('logged_in'):
+            flash("Please log in to access this page.", "warning")
+            return redirect(url_for('login'))
+        return f(*args, **kwargs)
+    return decorated_function
+
+# ---------- MAKE SESSION AVAILABLE IN ALL TEMPLATES ----------
+@app.context_processor
+def inject_session():
+    return dict(session=session)
+
+# ---------- DATABASE CONNECTION ----------
+def get_db(db_name="LoginData.db"):
+    conn = sqlite3.connect(db_name)
+    conn.row_factory = sqlite3.Row
+    return conn
+
+def get_booking_db():
+    conn = sqlite3.connect("Bookings.db")
+    conn.row_factory = sqlite3.Row
+    return conn
+
+# ---------- ROUTES ----------
+@app.route('/')
+def index():
+    return render_template('index.html')
+
+@app.route('/login')
+def login():
+    if session.get('logged_in'):
+        return redirect(url_for('home'))
+    return render_template('login.html')
+
+@app.route('/signup')
+def signUp():
+    if session.get('logged_in'):
+        return redirect(url_for('home'))
+    return render_template('signUp.html')
+
+@app.route('/about')
+def about():
+    return render_template('About us.html')
+
+@app.route('/contact')
+def contact():
+    return render_template('Contact Us.html')
+
+@app.route('/products')
+def product_view():
+    return render_template('Product View.html')
+
+@app.route('/pricing')
+def pricing():
+    return render_template('Pricing.html')
+
+@app.route('/services')
+@login_required
+def services():
+    return render_template('Services.html')
+
+@app.route('/repairs')
+@login_required
+def repairs():
+    return render_template('Repairs.html')
+
+# ---------- SIGNUP ----------
+@app.route('/add_user', methods=['POST'])
+def add_user():
+    fname = request.form['fname'].strip()
+    lname = request.form['lname'].strip()
+    email = request.form['email'].strip()
+    password = request.form['password'].strip()
+
+    if not fname or not lname or not email or not password:
+        flash("All fields are required.", "error")
+        return redirect(url_for('signUp'))
+
+    hashed_password = generate_password_hash(password)
+
+    try:
+        with get_db() as conn:
+            cursor = conn.cursor()
+            cursor.execute(
+                "INSERT INTO USERS (first_name, last_name, email, password) VALUES (?, ?, ?, ?)",
+                (fname, lname, email, hashed_password)
+            )
+            conn.commit()
+        flash("Account created successfully. Please log in.", "success")
+        return redirect(url_for('login'))
+    except sqlite3.IntegrityError:
+        flash("Email already exists. Try logging in.", "error")
+        return redirect(url_for('signUp'))
+    except sqlite3.OperationalError:
+        # Retry once if DB is locked
+        time.sleep(0.1)
+        with get_db() as conn:
+            cursor = conn.cursor()
+            cursor.execute(
+                "INSERT INTO USERS (first_name, last_name, email, password) VALUES (?, ?, ?, ?)",
+                (fname, lname, email, hashed_password)
+            )
+            conn.commit()
+        flash("Account created successfully. Please log in.", "success")
+        return redirect(url_for('login'))
+
+# ---------- LOGIN ----------
+@app.route('/login_validation', methods=['POST'])
+def login_validation():
+    email = request.form['email'].strip()
+    password = request.form['password'].strip()
+
+    if not email or not password:
+        flash("Email and password are required.", "error")
+        return redirect(url_for('login'))
+
+    with get_db() as conn:
+        cursor = conn.cursor()
+        user = cursor.execute(
+            "SELECT first_name, last_name, email, password FROM USERS WHERE email=?",
+            (email,)
+        ).fetchone()
+
+    if user and check_password_hash(user['password'], password):
+        session.clear()
+        session['logged_in'] = True
+        session['fname'] = user['first_name']
+        session['lname'] = user['last_name']
+        session['email'] = user['email']
+        flash(f"Welcome, {user['first_name']}!", "success")
+        return redirect(url_for('home'))
+
+    flash("Invalid email or password.", "error")
+    return redirect(url_for('login'))
+
+# ---------- LOGOUT ----------
+@app.route('/logout')
+@login_required
+def logout():
+    session.clear()
+    flash("You have been logged out.", "info")
+    return redirect(url_for('login'))
+
+# ---------- HOME ----------
+@app.route('/home')
+@login_required
+def home():
+    return render_template('home.html')
+
+
+
+if __name__ == '__main__':
+    app.run(debug=True)
